@@ -148,8 +148,13 @@ export default function HomePage() {
         user_phone: user.phone, date: today, meal_type: componentKey,
         description: text, calories, protein, eaten: true,
       });
-      // On DB error keep the optimistic state — localStorage preserves the selection
-      if (error) console.error("Insert error:", error.message);
+      if (error) {
+        console.error("Insert error:", error.message);
+        const rollbackLogs = updatedLogs.filter((l) => l.id !== tempLog.id);
+        setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
+        setLogs(rollbackLogs);
+        saveLogs(user.phone, today, rollbackLogs);
+      }
     }
   };
 

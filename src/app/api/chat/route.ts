@@ -169,10 +169,9 @@ export async function POST(req: NextRequest) {
       eaten: true,
     });
 
-    if (error) console.error("Supabase insert error:", error.message);
-
-    // Always report success to the model — DB errors are handled client-side via localStorage
-    const toolResult = `עודכן בהצלחה: "${args.description}" — ${args.calories} קק"ל, ${args.protein}גר' חלבון`;
+    const toolResult = error
+      ? `שגיאה בשמירה: ${error.message}`
+      : `עודכן בהצלחה: "${args.description}" — ${args.calories} קק"ל, ${args.protein}גר' חלבון`;
 
     // Second call — model acknowledges the update
     const secondResponse = await openai.chat.completions.create({
@@ -192,7 +191,7 @@ export async function POST(req: NextRequest) {
     });
 
     const finalMessage = secondResponse.choices[0].message.content ?? "";
-    return Response.json({ message: finalMessage, didUpdate: true, updatedMeal: args });
+    return Response.json({ message: finalMessage, didUpdate: !error, updatedMeal: args });
   }
 
   // No tool call — regular response
