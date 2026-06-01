@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
 import BottomNav from "@/components/BottomNav";
 import { FoodLog } from "@/types";
-import { ChevronRight, ChevronLeft } from "lucide-react";
+import { ChevronRight, ChevronLeft, X } from "lucide-react";
 
 type DayStat = {
   date: string;
@@ -19,6 +19,10 @@ const HEBREW_MONTHS = [
   "יולי","אוגוסט","ספטמבר","אוקטובר","נובמבר","דצמבר",
 ];
 const DAY_LABELS = ["א", "ב", "ג", "ד", "ה", "ו", "ש"];
+
+function localDateStr(d: Date) {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+}
 
 function getDayColor(cal: number, target: number, hasData: boolean): string {
   if (!hasData) return "bg-gray-100 text-gray-300";
@@ -35,9 +39,10 @@ export default function StatsPage() {
   const [monthOffset, setMonthOffset] = useState(0);
   const [dayStats, setDayStats] = useState<Record<string, DayStat>>({});
   const [loading, setLoading] = useState(false);
+  const [selectedDate, setSelectedDate] = useState<string | null>(null);
 
   const todayDate = new Date();
-  const today = todayDate; // keep reference for todayStr below
+  const todayStr = localDateStr(todayDate);
   const targetDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + monthOffset, 1);
   const year = targetDate.getFullYear();
   const month = targetDate.getMonth();
@@ -60,6 +65,8 @@ export default function StatsPage() {
     if (data) {
       const grouped: Record<string, DayStat> = {};
       data.forEach((log) => {
+        // skip marker entries (calories=0, meal_type without colon)
+        if (log.calories === 0 && !log.meal_type.includes(":")) return;
         if (!grouped[log.date]) {
           grouped[log.date] = { date: log.date, calories: 0, protein: 0, mealCount: 0 };
         }
@@ -86,9 +93,8 @@ export default function StatsPage() {
   }
 
   // Build calendar grid
-  const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0=Sun
+  const firstDayOfMonth = new Date(year, month, 1).getDay();
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   const calendarCells: (number | null)[] = [
     ...Array(firstDayOfMonth).fill(null),
@@ -96,7 +102,7 @@ export default function StatsPage() {
   ];
   while (calendarCells.length % 7 !== 0) calendarCells.push(null);
 
-  // Summary stats
+  // Summary stats — only days with actual data
   const activeDays = Object.values(dayStats).filter((d) => d.calories > 0);
   const avgCalories = activeDays.length
     ? Math.round(activeDays.reduce((s, d) => s + d.calories, 0) / activeDays.length)
@@ -163,9 +169,10 @@ export default function StatsPage() {
                 const colorClass = isFuture ? "bg-gray-50 text-gray-300" : getDayColor(stat?.calories ?? 0, calorieTarget, hasData);
 
                 return (
-                  <div
+                  <button
                     key={day}
-                    className={`aspect-square flex flex-col items-center justify-center rounded-xl text-xs font-medium transition-all ${colorClass} ${
+                    onClick={() => !isFuture && setSelectedDate(dateStr)}
+                    className={`aspect-square flex flex-col items-center justify-center rounded-xl text-xs font-medium transition-all active:scale-95 ${colorClass} ${
                       isToday ? "ring-2 ring-green-600 ring-offset-1" : ""
                     }`}
                   >
@@ -173,7 +180,7 @@ export default function StatsPage() {
                     {hasData && (
                       <span className="text-[8px] opacity-80 leading-none">{stat.calories}</span>
                     )}
-                  </div>
+                  </button>
                 );
               })}
             </div>
@@ -198,41 +205,17 @@ export default function StatsPage() {
 
         {/* Summary stats */}
         <div className="grid grid-cols-2 gap-3">
-          <StatCard
-            value={activeDays.length}
-            label="ימים מתועדים"
-            sub={`מתוך ${daysInMonth} ימים`}
-            color="text-green-600"
-          />
-          <StatCard
-            value={daysOnTrack}
-            label="ימים על היעד"
-            sub={`≥90% מ-${calorieTarget} קק״ל`}
-            color="text-blue-600"
-          />
-          <StatCard
-            value={avgCalories}
-            label="ממוצע קק״ל"
-            sub={`יעד: ${calorieTarget}`}
-            color="text-orange-500"
-          />
-          <StatCard
-            value={Math.round(avgProtein)}
-            label="ממוצע חלבון"
-            sub={`יעד: ${proteinTarget}גר׳`}
-            color="text-purple-600"
-          />
+          <StatCard value={activeDays.length} label="ימים מתועדים" sub={`מתוך ${daysInMonth} ימים`} color="text-green-600" />
+          <StatCard value={daysOnTrack} label="ימים על היעד" sub={`≥90% מ-${calorieTarget} קק״ל`} color="text-blue-600" />
+          <StatCard value={avgCalories} label="ממוצע קק״ל" sub={`יעד: ${calorieTarget}`} color="text-orange-500" />
+          <StatCard value={Math.round(avgProtein)} label="ממוצע חלבון" sub={`יעד: ${proteinTarget}גר׳`} color="text-purple-600" />
         </div>
 
-        {/* Best/worst days */}
         {activeDays.length > 0 && (
           <div className="bg-white rounded-3xl p-4 shadow-sm">
             <h3 className="text-sm font-semibold text-gray-600 mb-3">סיכום חודשי</h3>
             <div className="flex flex-col gap-2">
-              <SummaryRow
-                label="סה״כ ארוחות מתועדות"
-                value={`${totalMeals}`}
-              />
+              <SummaryRow label="סה״כ ארוחות מתועדות" value={`${totalMeals}`} />
               <SummaryRow
                 label="אחוז עמידה ביעד"
                 value={`${activeDays.length > 0 ? Math.round((daysOnTrack / activeDays.length) * 100) : 0}%`}
@@ -249,10 +232,163 @@ export default function StatsPage() {
       </div>
 
       <BottomNav />
+
+      {selectedDate && (
+        <DayDetailSheet
+          date={selectedDate}
+          stat={dayStats[selectedDate]}
+          calorieTarget={calorieTarget}
+          proteinTarget={proteinTarget}
+          phone={user.phone}
+          onClose={() => setSelectedDate(null)}
+        />
+      )}
     </div>
   );
 }
 
+// ─── Day Detail Sheet ───────────────────────────────────────────────
+function DayDetailSheet({
+  date, stat, calorieTarget, proteinTarget, phone, onClose,
+}: {
+  date: string;
+  stat: DayStat | undefined;
+  calorieTarget: number;
+  proteinTarget: number;
+  phone: string;
+  onClose: () => void;
+}) {
+  const [meals, setMeals] = useState<FoodLog[]>([]);
+  const [showMeals, setShowMeals] = useState(false);
+  const [loadingMeals, setLoadingMeals] = useState(false);
+
+  useEffect(() => {
+    document.body.style.overflow = "hidden";
+    return () => { document.body.style.overflow = ""; };
+  }, []);
+
+  const handleShowMeals = async () => {
+    if (showMeals) { setShowMeals(false); return; }
+    setLoadingMeals(true);
+    const res = await fetch(`/api/logs?phone=${phone}&date=${date}&eaten=true`);
+    const { data } = await res.json() as { data: FoodLog[] };
+    // filter out marker entries
+    setMeals((data ?? []).filter((l) => l.calories > 0 || l.meal_type.includes(":")));
+    setShowMeals(true);
+    setLoadingMeals(false);
+  };
+
+  const calories = stat?.calories ?? 0;
+  const protein = stat?.protein ?? 0;
+  const calPct = Math.min((calories / calorieTarget) * 100, 100);
+  const protPct = Math.min((protein / proteinTarget) * 100, 100);
+
+  const MEAL_LABELS: Record<string, string> = {
+    breakfast: "בוקר", snack1: "ביניים 1", lunch: "צהריים",
+    snack2: "ביניים 2", dinner: "ערב", custom: "נוסף",
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex flex-col justify-end" style={{ maxWidth: 430, margin: "0 auto" }}>
+      <div className="absolute inset-0 bg-black/40" onClick={onClose} />
+      <div className="relative bg-white rounded-t-3xl max-h-[80vh] flex flex-col shadow-2xl">
+        {/* Handle */}
+        <div className="flex justify-center pt-3 pb-1 shrink-0">
+          <div className="w-10 h-1 bg-gray-200 rounded-full" />
+        </div>
+
+        {/* Header */}
+        <div className="flex items-center justify-between px-5 py-3 border-b border-gray-100 shrink-0">
+          <div>
+            <p className="text-[11px] text-gray-400">סיכום יום</p>
+            <p className="text-sm font-bold text-gray-800">{formatDate(date)}</p>
+          </div>
+          <button onClick={onClose} className="p-1 text-gray-400">
+            <X size={20} />
+          </button>
+        </div>
+
+        <div className="overflow-y-auto flex-1 px-5 py-4 flex flex-col gap-4">
+          {/* Calories */}
+          <div>
+            <div className="flex justify-between text-sm mb-1.5">
+              <span className="font-medium text-gray-700">קלוריות</span>
+              <span className={`font-semibold ${calories >= calorieTarget * 0.9 ? "text-green-600" : "text-gray-500"}`}>
+                {calories} / {calorieTarget} קק״ל
+              </span>
+            </div>
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className={`h-full rounded-full transition-all ${calories >= calorieTarget * 0.9 ? "bg-green-500" : calories >= calorieTarget * 0.6 ? "bg-green-300" : "bg-yellow-400"}`}
+                style={{ width: `${calPct}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">{Math.round(calPct)}% מהיעד</p>
+          </div>
+
+          {/* Protein */}
+          <div>
+            <div className="flex justify-between text-sm mb-1.5">
+              <span className="font-medium text-gray-700">חלבון</span>
+              <span className={`font-semibold ${protein >= proteinTarget * 0.9 ? "text-blue-600" : "text-gray-500"}`}>
+                {Math.round(protein)} / {proteinTarget} גר׳
+              </span>
+            </div>
+            <div className="h-3 bg-gray-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-blue-400 rounded-full transition-all"
+                style={{ width: `${protPct}%` }}
+              />
+            </div>
+            <p className="text-[11px] text-gray-400 mt-1">{Math.round(protPct)}% מהיעד</p>
+          </div>
+
+          {/* Show meals button */}
+          <button
+            onClick={handleShowMeals}
+            disabled={loadingMeals}
+            className="w-full py-3 rounded-2xl border border-gray-200 text-sm font-medium text-gray-600 active:scale-95 transition-transform flex items-center justify-center gap-2"
+          >
+            {loadingMeals
+              ? <div className="w-4 h-4 border-2 border-gray-300 border-t-transparent rounded-full animate-spin" />
+              : showMeals ? "הסתר ארוחות ▲" : "מה אכלתי ביום זה ▼"}
+          </button>
+
+          {/* Meals list */}
+          {showMeals && (
+            <div className="flex flex-col gap-2">
+              {meals.length === 0 ? (
+                <p className="text-center text-sm text-gray-400 py-3">אין נתונים לתאריך זה</p>
+              ) : (
+                meals.map((log, i) => {
+                  const mealKey = log.meal_type.includes(":") ? log.meal_type.split(":")[0] : log.meal_type;
+                  const label = MEAL_LABELS[mealKey] ?? mealKey;
+                  return (
+                    <div key={i} className="flex items-center justify-between px-3 py-2.5 bg-gray-50 rounded-xl">
+                      <div className="flex-1 min-w-0">
+                        <span className="text-[10px] font-semibold text-green-600 block">{label}</span>
+                        <p className="text-sm text-gray-700 leading-snug">{log.description}</p>
+                      </div>
+                      <div className="text-right shrink-0 mr-2">
+                        <p className="text-xs text-gray-500">{log.calories} קק״ל</p>
+                        {log.protein > 0 && (
+                          <p className="text-[10px] text-blue-400">{log.protein}גר׳</p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          )}
+          <div className="h-2 shrink-0" />
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ─── Helper components ──────────────────────────────────────────────
 function StatCard({ value, label, sub, color }: {
   value: number; label: string; sub: string; color: string;
 }) {
@@ -275,5 +411,5 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 }
 
 function formatDate(dateStr: string): string {
-  return new Date(dateStr).toLocaleDateString("he-IL", { day: "numeric", month: "long" });
+  return new Date(dateStr + "T12:00:00").toLocaleDateString("he-IL", { day: "numeric", month: "long", year: "numeric" });
 }
