@@ -8,7 +8,7 @@ import { Leaf } from "lucide-react";
 export default function OnboardingPage() {
   const { setUser } = useUser();
   const router = useRouter();
-  const [form, setForm] = useState({ name: "", phone: "", gender: "" });
+  const [form, setForm] = useState({ name: "", phone: "" });
   const [error, setError] = useState("");
 
   const handleSubmit = (e: React.FormEvent) => {
@@ -18,7 +18,6 @@ export default function OnboardingPage() {
     setUser({
       name: form.name.trim(),
       phone: form.phone.trim(),
-      gender: (form.gender as "male" | "female") || undefined,
       calorie_target: 1300,
       protein_target: 110,
       carbs_target: 130,
@@ -58,26 +57,6 @@ export default function OnboardingPage() {
             onChange={(e) => setForm({ ...form, phone: e.target.value })}
             className="w-full px-4 py-3.5 rounded-2xl border border-gray-200 text-gray-900 placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent text-base"
           />
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-700 mb-1.5">מגדר</label>
-          <div className="grid grid-cols-2 gap-3">
-            {([["female", "👩 נקבה"], ["male", "👨 זכר"]] as const).map(([val, label]) => (
-              <button
-                key={val}
-                type="button"
-                onClick={() => setForm({ ...form, gender: val })}
-                className={`py-3.5 rounded-2xl border text-sm font-medium transition-all active:scale-95 ${
-                  form.gender === val
-                    ? "border-green-500 bg-green-50 text-green-700"
-                    : "border-gray-200 text-gray-700"
-                }`}
-              >
-                {label}
-              </button>
-            ))}
-          </div>
         </div>
 
         {error && <p className="text-red-500 text-sm text-center">{error}</p>}
