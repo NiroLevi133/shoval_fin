@@ -62,6 +62,7 @@ export default function HomePage() {
   const [logs, setLogs] = useState<FoodLog[]>([]);
   const [eatenComponents, setEatenComponents] = useState<Map<string, FoodLog>>(new Map());
   const [activeSheet, setActiveSheet] = useState<SheetState>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const todayName = getTodayName();
   const today = new Date().toISOString().split("T")[0];
@@ -122,12 +123,7 @@ export default function HomePage() {
         .from("food_logs").delete()
         .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
     } else {
-      // Delete full-meal entry (avoid double-counting) AND any stale component entry
-      await supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey);
-      await supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
-
+      // Optimistic update first — chip turns green immediately
       const tempLog: FoodLog = {
         id: crypto.randomUUID(),
         user_phone: user.phone,
@@ -143,13 +139,20 @@ export default function HomePage() {
       setEatenComponents((prev) => new Map(prev).set(componentKey, tempLog));
       setLogs(updatedLogs);
       saveLogs(user.phone, today, updatedLogs);
+      setSaveError(null);
+
+      // Persist to DB in the background
+      await supabase.from("food_logs").delete()
+        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey);
+      await supabase.from("food_logs").delete()
+        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
 
       const { error } = await supabase.from("food_logs").insert({
         user_phone: user.phone, date: today, meal_type: componentKey,
         description: text, calories, protein, eaten: true,
       });
       if (error) {
-        console.error("Insert error:", error.message);
+        setSaveError(`שגיאה בשמירה: ${error.message}`);
         const rollbackLogs = updatedLogs.filter((l) => l.id !== tempLog.id);
         setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
         setLogs(rollbackLogs);
@@ -177,6 +180,12 @@ export default function HomePage() {
 
   return (
     <div className="pb-safe">
+      {saveError && (
+        <div className="bg-red-50 border-b border-red-200 px-4 py-2 flex items-center justify-between">
+          <p className="text-xs text-red-600">{saveError}</p>
+          <button onClick={() => setSaveError(null)} className="text-red-400 text-xs ml-2">✕</button>
+        </div>
+      )}
       {/* Header */}
       <div className="bg-white px-5 pt-12 pb-4 border-b border-gray-100">
         <p className="text-xs text-gray-400 mb-0.5">{getHebrewDate()}</p>
