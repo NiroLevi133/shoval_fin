@@ -7,9 +7,10 @@ import { supabase } from "@/lib/supabase";
 import BottomNav from "@/components/BottomNav";
 import ProgressRing from "@/components/ProgressRing";
 import SubstitutionSheet, { estimateMacros } from "@/components/SubstitutionSheet";
+import ScanResultSheet from "@/components/ScanResultSheet";
 import mealPlanData from "@/data/mealPlan.json";
 import { DayPlan, MealKey, FoodLog } from "@/types";
-import { CheckCircle2 } from "lucide-react";
+import { CheckCircle2, Camera } from "lucide-react";
 
 const DAY_NAMES = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 const MEAL_ORDER: MealKey[] = ["breakfast", "snack1", "lunch", "snack2", "dinner"];
@@ -63,6 +64,12 @@ export default function HomePage() {
   const [eatenComponents, setEatenComponents] = useState<Map<string, FoodLog>>(new Map());
   const [activeSheet, setActiveSheet] = useState<SheetState>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState<string | null>(null);
+  const [scanResult, setScanResult] = useState<{
+    mealKey: string;
+    mealLabel: string;
+    components: Array<{ text: string; calories: number; protein: number }>;
+  } | null>(null);
 
   const todayName = getTodayName();
   const today = new Date().toISOString().split("T")[0];
@@ -161,6 +168,37 @@ export default function HomePage() {
     }
   };
 
+  const handleScanImage = async (mealKey: string, mealLabel: string, file: File) => {
+    setScanning(mealKey);
+    try {
+      const resized = await resizeImage(file, 720);
+      const base64 = resized.split(",")[1];
+      const mimeType = file.type;
+      const res = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ imageBase64: base64, mimeType, mealLabel }),
+      });
+      const data = await res.json() as { components: Array<{ text: string; calories: number; protein: number }> };
+      setScanResult({ mealKey, mealLabel, components: data.components });
+    } catch {
+      setSaveError("שגיאה בסריקת התמונה");
+    }
+    setScanning(null);
+  };
+
+  const handleScanConfirm = async (components: Array<{ text: string; calories: number; protein: number }>) => {
+    if (!scanResult || !user) return;
+    const { mealKey } = scanResult;
+    setScanResult(null);
+    for (let i = 0; i < components.length; i++) {
+      await selectComponent(mealKey, i, components[i].text, components[i].calories, components[i].protein);
+    }
+  };
+
+  // Custom entries (manual food log + AI-added custom items)
+  const extraLogs = logs.filter((l) => l.meal_type === "custom" || l.meal_type.startsWith("custom:"));
+
   // Sum only component-level logs (meal_type contains ":") + any AI-logged full meals
   const consumedCalories = logs.reduce((s, l) => s + (l.calories || 0), 0);
   const consumedProtein = logs.reduce((s, l) => {
@@ -226,9 +264,23 @@ export default function HomePage() {
             {todayPlan ? MEAL_ORDER.map((mealKey) => {
               const meal = todayPlan[mealKey];
               if (!meal) return null;
+
               const components = parseComponents(meal.description);
-              const eatenCount = components.filter((_, i) => eatenComponents.has(`${mealKey}:${i}`)).length;
-              const allEaten = eatenCount === components.length;
+
+              // Collect any extra AI-added chips beyond the plan's component count
+              const extraAiIndices: number[] = [];
+              for (let x = components.length; eatenComponents.has(`${mealKey}:${x}`); x++) {
+                extraAiIndices.push(x);
+              }
+
+              const totalChips = components.length + extraAiIndices.length;
+              const eatenCount = Array.from({ length: totalChips }, (_, i) => i)
+                .filter((i) => eatenComponents.has(`${mealKey}:${i}`)).length;
+              const allEaten = eatenCount === totalChips && totalChips > 0;
+
+              // AI updated this meal only if a marker entry (meal_type === mealKey, no colon) exists.
+              // Manual chip substitutions don't create a marker, so their sibling chips stay visible.
+              const isAiUpdated = logs.some((l) => l.meal_type === mealKey);
 
               return (
                 <div key={mealKey}>
@@ -238,10 +290,32 @@ export default function HomePage() {
                       {meal.label}
                       {allEaten && " ✓"}
                     </span>
-                    <span className="text-[11px] text-gray-400">
-                      {eatenCount > 0 && `${eatenCount}/${components.length} • `}
-                      {meal.calories} קק״ל
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-gray-400">
+                        {eatenCount > 0 && `${eatenCount}/${components.length} • `}
+                        {meal.calories} קק״ל
+                      </span>
+                      {/* Camera button */}
+                      <label className="cursor-pointer">
+                        <input
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleScanImage(mealKey, meal.label, file);
+                            e.target.value = "";
+                          }}
+                        />
+                        {scanning === mealKey ? (
+                          <div className="w-6 h-6 border-2 border-purple-400 border-t-transparent rounded-full animate-spin" />
+                        ) : (
+                          <div className="w-6 h-6 bg-purple-50 border border-purple-200 rounded-lg flex items-center justify-center active:scale-95 transition-transform">
+                            <Camera size={12} className="text-purple-500" />
+                          </div>
+                        )}
+                      </label>
+                    </div>
                   </div>
 
                   {/* Component chips with + separator */}
@@ -252,9 +326,12 @@ export default function HomePage() {
                       const isEaten = !!log;
                       const isSubstituted = isEaten && log.description !== comp;
 
+                      // Hide uneaten plan chips when AI has updated this meal
+                      if (!isEaten && isAiUpdated) return null;
+
                       return (
                         <Fragment key={i}>
-                          {i > 0 && (
+                          {i > 0 && isEaten && (
                             <span className="text-gray-300 text-xs font-semibold shrink-0 select-none">
                               +
                             </span>
@@ -262,7 +339,6 @@ export default function HomePage() {
                           <button
                             onClick={() => {
                               if (isEaten) {
-                                // Toggle off directly
                                 selectComponent(mealKey, i, comp, 0, 0);
                               } else {
                                 setActiveSheet({ mealKey, idx: i, component: comp });
@@ -289,6 +365,25 @@ export default function HomePage() {
                         </Fragment>
                       );
                     })}
+
+                    {/* Extra AI-added chips beyond plan component count */}
+                    {extraAiIndices.map((i, arrIdx) => {
+                      const key = `${mealKey}:${i}`;
+                      const log = eatenComponents.get(key)!;
+                      const hasPrevChips = eatenCount - extraAiIndices.length > 0 || arrIdx > 0;
+                      return (
+                        <Fragment key={i}>
+                          {hasPrevChips && <span className="text-gray-300 text-xs font-semibold shrink-0 select-none">+</span>}
+                          <button
+                            onClick={() => selectComponent(mealKey, i, log.description, 0, 0)}
+                            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-xl text-xs border transition-all active:scale-95 max-w-[200px] bg-green-50 border-green-200 text-green-700"
+                          >
+                            <CheckCircle2 size={13} className="text-green-500 shrink-0" />
+                            <span className="leading-snug text-right line-clamp-2">{log.description}</span>
+                          </button>
+                        </Fragment>
+                      );
+                    })}
                   </div>
 
                   {/* Hint text */}
@@ -304,6 +399,31 @@ export default function HomePage() {
             )}
           </div>
         </div>
+
+        {/* Extra logs from AI / manual food log */}
+        {extraLogs.length > 0 && (
+          <div className="bg-white rounded-3xl p-5 shadow-sm">
+            <h2 className="text-sm font-semibold text-gray-500 mb-3">עדכונים נוספים</h2>
+            <div className="flex flex-col gap-2.5">
+              {extraLogs.map((log) => (
+                <div key={log.id} className="flex items-center justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-gray-700 leading-snug truncate">{log.description}</p>
+                    <div className="flex gap-2 mt-0.5">
+                      <span className="text-[11px] text-gray-400">{log.calories} קק״ל</span>
+                      {log.protein > 0 && (
+                        <span className="text-[11px] text-blue-500">{log.protein}גר׳ חלבון</span>
+                      )}
+                    </div>
+                  </div>
+                  <span className="text-[10px] text-gray-300 shrink-0">
+                    {log.meal_type === "custom" ? "ידני" : log.meal_type === "breakfast" ? "בוקר" : log.meal_type === "lunch" ? "צהריים" : log.meal_type === "dinner" ? "ערב" : log.meal_type === "snack1" || log.meal_type === "snack2" ? "ביניים" : log.meal_type}
+                  </span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       <BottomNav />
@@ -318,8 +438,36 @@ export default function HomePage() {
           onClose={() => setActiveSheet(null)}
         />
       )}
+
+      {/* Scan Result Sheet */}
+      {scanResult && (
+        <ScanResultSheet
+          mealLabel={scanResult.mealLabel}
+          components={scanResult.components}
+          onConfirm={handleScanConfirm}
+          onClose={() => setScanResult(null)}
+        />
+      )}
     </div>
   );
+}
+
+function resizeImage(file: File, maxSize: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.round(img.width * scale);
+      canvas.height = Math.round(img.height * scale);
+      canvas.getContext("2d")!.drawImage(img, 0, 0, canvas.width, canvas.height);
+      URL.revokeObjectURL(url);
+      resolve(canvas.toDataURL("image/jpeg", 0.85));
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
 }
 
 function MacroBar({ label, value, max, color, unit }: {

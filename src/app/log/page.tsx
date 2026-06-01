@@ -12,7 +12,7 @@ import { Plus, Trash2 } from "lucide-react";
 const DAY_NAMES = ["ראשון", "שני", "שלישי", "רביעי", "חמישי", "שישי", "שבת"];
 
 export default function LogPage() {
-  const { user, isLoading } = useUser();
+  const { user, isLoading, refreshLogs } = useUser();
   const router = useRouter();
   const [logs, setLogs] = useState<FoodLog[]>([]);
   const [showAdd, setShowAdd] = useState(false);
@@ -65,6 +65,7 @@ export default function LogPage() {
       setNewEntry({ description: "", calories: "", protein: "" });
       setShowAdd(false);
       await fetchLogs();
+      refreshLogs();
     } else {
       console.error("Insert error:", error.message);
     }
@@ -76,6 +77,7 @@ export default function LogPage() {
     await supabase.from("food_logs").delete().eq("id", id);
     setLogs((prev) => prev.filter((l) => l.id !== id));
     setDeleting(null);
+    refreshLogs();
   };
 
   const eatenLogs = logs.filter((l) => l.eaten);

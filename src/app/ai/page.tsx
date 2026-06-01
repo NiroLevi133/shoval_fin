@@ -112,24 +112,42 @@ export default function AIPage() {
       setMessages([...newMessages, assistantMsg]);
 
       if (data.didUpdate && data.updatedMeal) {
-        // Save to localStorage so home page reflects AI updates even if DB write failed
-        const { meal_type, description, calories, protein } = data.updatedMeal;
+        // Save component entries to localStorage so home page reflects AI updates
+        const { meal_type, components } = data.updatedMeal as {
+          meal_type: string;
+          description: string;
+          calories: number;
+          protein: number;
+          components: Array<{ text: string; calories: number; protein: number }>;
+        };
         const key = `fitmeal_logs_${user.phone}_${today}`;
         try {
           const existing: FoodLog[] = JSON.parse(localStorage.getItem(key) ?? "[]");
           const updated: FoodLog[] = [
-            ...existing.filter((l) => l.meal_type !== meal_type),
+            ...existing.filter((l) => l.meal_type !== meal_type && !l.meal_type.startsWith(`${meal_type}:`)),
+            // marker so home screen knows this meal was AI-replaced
             {
               id: crypto.randomUUID(),
               user_phone: user.phone,
               date: today,
-              meal_type,
-              description,
-              calories,
-              protein,
+              meal_type: meal_type,
+              description: components.map((c: { text: string }) => c.text).join(" + "),
+              calories: 0,
+              protein: 0,
               eaten: true,
               created_at: new Date().toISOString(),
             },
+            ...components.map((comp, i) => ({
+              id: crypto.randomUUID(),
+              user_phone: user.phone,
+              date: today,
+              meal_type: `${meal_type}:${i}`,
+              description: comp.text,
+              calories: comp.calories,
+              protein: comp.protein,
+              eaten: true,
+              created_at: new Date().toISOString(),
+            })),
           ];
           localStorage.setItem(key, JSON.stringify(updated));
         } catch {}

@@ -1,6 +1,7 @@
 export type User = {
   name: string;
   phone: string;
+  gender?: "male" | "female";
   age?: number;
   weight?: number;
   height?: number;

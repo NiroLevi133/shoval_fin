@@ -62,6 +62,25 @@ export default function ProfilePage() {
           <div className="flex flex-col gap-3">
             <Field label="שם" value={form.name ?? ""} onChange={(v) => setForm({ ...form, name: v })} />
             <Field label="טלפון" value={form.phone ?? ""} onChange={(v) => setForm({ ...form, phone: v })} type="tel" />
+            <div>
+              <label className="block text-xs text-gray-400 mb-1.5">מגדר</label>
+              <div className="grid grid-cols-2 gap-2">
+                {([["female", "👩 נקבה"], ["male", "👨 זכר"]] as const).map(([val, label]) => (
+                  <button
+                    key={val}
+                    type="button"
+                    onClick={() => setForm({ ...form, gender: val })}
+                    className={`py-2.5 rounded-xl border text-sm font-medium transition-all ${
+                      form.gender === val
+                        ? "border-green-500 bg-green-50 text-green-700"
+                        : "border-gray-200 bg-gray-50 text-gray-600"
+                    }`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <div className="grid grid-cols-3 gap-2">
               <Field label="גיל" value={form.age?.toString() ?? ""} onChange={(v) => setForm({ ...form, age: parseInt(v) || undefined })} type="number" />
               <Field label="משקל (ק״ג)" value={form.weight?.toString() ?? ""} onChange={(v) => setForm({ ...form, weight: parseFloat(v) || undefined })} type="number" />
