@@ -81,17 +81,19 @@ export default function HomePage() {
       .eq("user_phone", user.phone)
       .eq("date", today)
       .eq("eaten", true);
-    // Fall back to localStorage when Supabase is in offline/mock mode
-    const logsData: FoodLog[] | null = data ?? loadLogs(user.phone, today);
-    if (logsData) {
-      setLogs(logsData);
-      const compMap = new Map<string, FoodLog>();
-      logsData.forEach((l: FoodLog) => {
-        if (l.meal_type.includes(":")) compMap.set(l.meal_type, l);
-      });
-      setEatenComponents(compMap);
-      if (data) saveLogs(user.phone, today, logsData);
-    }
+    // Prefer Supabase when it has entries; fall back to localStorage for
+    // offline/mock mode OR when a previous insert silently failed (DB empty)
+    const localData = loadLogs(user.phone, today);
+    const logsData: FoodLog[] =
+      data && data.length > 0 ? data :
+      localData ?? (data ?? []);
+    setLogs(logsData);
+    const compMap = new Map<string, FoodLog>();
+    logsData.forEach((l: FoodLog) => {
+      if (l.meal_type.includes(":")) compMap.set(l.meal_type, l);
+    });
+    setEatenComponents(compMap);
+    if (data && data.length > 0) saveLogs(user.phone, today, data);
   }, [user?.phone, today]);
 
   useEffect(() => {
@@ -120,10 +122,11 @@ export default function HomePage() {
         .from("food_logs").delete()
         .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
     } else {
-      // Delete any old full-meal entry for this meal (avoid double-counting)
-      await supabase
-        .from("food_logs").delete()
+      // Delete full-meal entry (avoid double-counting) AND any stale component entry
+      await supabase.from("food_logs").delete()
         .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey);
+      await supabase.from("food_logs").delete()
+        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
 
       const tempLog: FoodLog = {
         id: crypto.randomUUID(),
@@ -145,13 +148,8 @@ export default function HomePage() {
         user_phone: user.phone, date: today, meal_type: componentKey,
         description: text, calories, protein, eaten: true,
       });
-      if (error) {
-        console.error("Insert error:", error.message);
-        const rollbackLogs = updatedLogs.filter((l) => l.id !== tempLog.id);
-        setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
-        setLogs(rollbackLogs);
-        saveLogs(user.phone, today, rollbackLogs);
-      }
+      // On DB error keep the optimistic state — localStorage preserves the selection
+      if (error) console.error("Insert error:", error.message);
     }
   };
 
