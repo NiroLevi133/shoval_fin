@@ -20,6 +20,19 @@ const QUICK_QUESTIONS = [
   "מה לאכול עכשיו?",
 ];
 
+function chatKey(phone: string, date: string) {
+  return `fitmeal_chat_${phone}_${date}`;
+}
+function loadChat(phone: string, date: string): Message[] | null {
+  try {
+    const raw = localStorage.getItem(chatKey(phone, date));
+    return raw ? (JSON.parse(raw) as Message[]) : null;
+  } catch { return null; }
+}
+function saveChat(phone: string, date: string, msgs: Message[]) {
+  try { localStorage.setItem(chatKey(phone, date), JSON.stringify(msgs)); } catch {}
+}
+
 export default function AIPage() {
   const { user, isLoading, refreshLogs } = useUser();
   const router = useRouter();
@@ -46,12 +59,17 @@ export default function AIPage() {
     if (!isLoading && !user) { router.push("/onboarding"); return; }
     if (user) {
       fetchTodayLog();
-      setMessages([{
-        role: "assistant",
-        content: `שלום ${user.name}! 👋 אני המאמן התזונתי שלך.\n\nאפשר לשאול אותי שאלות על התפריט, ולספר לי מה אכלת — ואני אעדכן את היומן שלך אוטומטית. 🍽️`,
-      }]);
+      const saved = loadChat(user.phone, today);
+      if (saved && saved.length > 0) {
+        setMessages(saved);
+      } else {
+        setMessages([{
+          role: "assistant",
+          content: `שלום ${user.name}! 👋 אני המאמן התזונתי שלך.\n\nאפשר לשאול אותי שאלות על התפריט, ולספר לי מה אכלת — ואני אעדכן את היומן שלך אוטומטית. 🍽️`,
+        }]);
+      }
     }
-  }, [user, isLoading, router, fetchTodayLog]);
+  }, [user, isLoading, router, fetchTodayLog, today]);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -64,6 +82,7 @@ export default function AIPage() {
     const userMsg: Message = { role: "user", content: messageText };
     const newMessages = [...messages, userMsg];
     setMessages(newMessages);
+    saveChat(user.phone, today, newMessages);
     setInput("");
     setSending(true);
 
@@ -99,7 +118,9 @@ export default function AIPage() {
         didUpdate: data.didUpdate,
       };
 
-      setMessages([...newMessages, assistantMsg]);
+      const finalMessages = [...newMessages, assistantMsg];
+      setMessages(finalMessages);
+      saveChat(user.phone, today, finalMessages);
 
       if (data.didUpdate && data.updatedMeal) {
         // Save component entries to localStorage so home page reflects AI updates
@@ -145,10 +166,9 @@ export default function AIPage() {
         refreshLogs();
       }
     } catch {
-      setMessages([...newMessages, {
-        role: "assistant",
-        content: "מצטער, אירעה שגיאה. נסה שוב.",
-      }]);
+      const errMessages = [...newMessages, { role: "assistant" as const, content: "מצטער, אירעה שגיאה. נסה שוב." }];
+      setMessages(errMessages);
+      saveChat(user.phone, today, errMessages);
     }
 
     setSending(false);
