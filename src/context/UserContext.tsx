@@ -37,7 +37,14 @@ export function UserProvider({ children }: { children: ReactNode }) {
     const stored = localStorage.getItem("fitmeal_user");
     if (stored) {
       try {
-        setUserState(JSON.parse(stored));
+        const u = JSON.parse(stored) as User;
+        setUserState(u);
+        // One-time migration: push localStorage logs to DB if not yet synced
+        if (!localStorage.getItem("fitmeal_synced_v1")) {
+          syncLocalStorageToDb(u.phone).then((count) => {
+            if (count > 0) localStorage.setItem("fitmeal_synced_v1", "1");
+          });
+        }
       } catch {
         localStorage.removeItem("fitmeal_user");
       }
@@ -67,3 +74,26 @@ export function UserProvider({ children }: { children: ReactNode }) {
 }
 
 export const useUser = () => useContext(UserContext);
+
+async function syncLocalStorageToDb(phone: string): Promise<number> {
+  try {
+    const prefix = `fitmeal_logs_${phone}_`;
+    const allLogs: object[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (!key?.startsWith(prefix)) continue;
+      const raw = localStorage.getItem(key);
+      if (!raw) continue;
+      const entries = JSON.parse(raw) as object[];
+      allLogs.push(...entries);
+    }
+    if (!allLogs.length) return 0;
+    const res = await fetch("/api/sync", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ phone, logs: allLogs }),
+    });
+    const { synced } = await res.json() as { synced: number };
+    return synced;
+  } catch { return 0; }
+}
