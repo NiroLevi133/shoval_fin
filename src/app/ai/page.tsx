@@ -40,7 +40,11 @@ export default function AIPage() {
       .eq("user_phone", user.phone)
       .eq("date", today)
       .eq("eaten", true);
-    if (data) setTodayLog(data);
+    const localData: FoodLog[] | null = (() => {
+      try { return JSON.parse(localStorage.getItem(`fitmeal_logs_${user.phone}_${today}`) ?? "null"); } catch { return null; }
+    })();
+    const logsData = data && data.length > 0 ? data : localData ?? data ?? [];
+    setTodayLog(logsData);
   }, [user?.phone, today]);
 
   useEffect(() => {
@@ -93,7 +97,11 @@ export default function AIPage() {
 
       if (!res.ok) throw new Error("API error");
 
-      const data = await res.json() as { message: string; didUpdate: boolean };
+      const data = await res.json() as {
+        message: string;
+        didUpdate: boolean;
+        updatedMeal?: { meal_type: string; description: string; calories: number; protein: number };
+      };
 
       const assistantMsg: Message = {
         role: "assistant",
@@ -103,8 +111,28 @@ export default function AIPage() {
 
       setMessages([...newMessages, assistantMsg]);
 
-      if (data.didUpdate) {
-        // Refresh the daily log locally + signal home page
+      if (data.didUpdate && data.updatedMeal) {
+        // Save to localStorage so home page reflects AI updates even if DB write failed
+        const { meal_type, description, calories, protein } = data.updatedMeal;
+        const key = `fitmeal_logs_${user.phone}_${today}`;
+        try {
+          const existing: FoodLog[] = JSON.parse(localStorage.getItem(key) ?? "[]");
+          const updated: FoodLog[] = [
+            ...existing.filter((l) => l.meal_type !== meal_type),
+            {
+              id: crypto.randomUUID(),
+              user_phone: user.phone,
+              date: today,
+              meal_type,
+              description,
+              calories,
+              protein,
+              eaten: true,
+              created_at: new Date().toISOString(),
+            },
+          ];
+          localStorage.setItem(key, JSON.stringify(updated));
+        } catch {}
         await fetchTodayLog();
         refreshLogs();
       }
