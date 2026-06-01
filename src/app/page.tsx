@@ -126,8 +126,7 @@ export default function HomePage() {
       setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
       setLogs(updatedLogs);
       saveLogs(user.phone, today, updatedLogs);
-      await supabase
-        .from("food_logs").delete()
+      supabase.from("food_logs").delete()
         .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
     } else {
       // Optimistic update first — chip turns green immediately
@@ -148,23 +147,17 @@ export default function HomePage() {
       saveLogs(user.phone, today, updatedLogs);
       setSaveError(null);
 
-      // Persist to DB in the background
-      await supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey);
-      await supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
-
-      const { error } = await supabase.from("food_logs").insert({
-        user_phone: user.phone, date: today, meal_type: componentKey,
-        description: text, calories, protein, eaten: true,
-      });
-      if (error) {
-        setSaveError(`שגיאה בשמירה: ${error.message}`);
-        const rollbackLogs = updatedLogs.filter((l) => l.id !== tempLog.id);
-        setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
-        setLogs(rollbackLogs);
-        saveLogs(user.phone, today, rollbackLogs);
-      }
+      // Sync to DB in background — localStorage is source of truth, no rollback on failure
+      supabase.from("food_logs").delete()
+        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey).then(() => {
+          supabase.from("food_logs").delete()
+            .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey).then(() => {
+              supabase.from("food_logs").insert({
+                user_phone: user.phone, date: today, meal_type: componentKey,
+                description: text, calories, protein, eaten: true,
+              });
+            });
+        });
     }
   };
 
