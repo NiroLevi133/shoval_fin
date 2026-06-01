@@ -161,11 +161,19 @@ export default function HomePage() {
 
       // Sync to DB in background — deletes must complete before insert to avoid race
       void (async () => {
-        await Promise.all([
-          apiDeleteLog(user.phone, today, mealKey),
-          apiDeleteLog(user.phone, today, componentKey),
-        ]);
-        await apiInsertLog({ user_phone: user.phone, date: today, meal_type: componentKey, description: text, calories, protein, eaten: true });
+        try {
+          await Promise.all([
+            apiDeleteLog(user.phone, today, mealKey),
+            apiDeleteLog(user.phone, today, componentKey),
+          ]);
+          const res = await apiInsertLog({ user_phone: user.phone, date: today, meal_type: componentKey, description: text, calories, protein, eaten: true });
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({})) as { error?: string };
+            setSaveError(err.error ?? "שגיאה בשמירה לשרת");
+          }
+        } catch {
+          setSaveError("שגיאת רשת — לא נשמר");
+        }
       })();
     }
   };

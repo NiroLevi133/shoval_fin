@@ -58,25 +58,19 @@ export default function StatsPage() {
     const lastDayStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
 
     const res = await fetch(
-      `/api/logs?phone=${user.phone}&date_from=${firstDay}&date_to=${lastDayStr}&eaten=true`
+      `/api/stats?phone=${user.phone}&date_from=${firstDay}&date_to=${lastDayStr}`
     );
-    const { data } = await res.json() as { data: FoodLog[] };
+    const { data } = await res.json() as { data: { date: string; calories: number; protein: number; meal_count: number }[] };
 
     if (data) {
       const grouped: Record<string, DayStat> = {};
-      data.forEach((log) => {
-        // skip marker entries (calories=0, meal_type without colon)
-        if (log.calories === 0 && !log.meal_type.includes(":")) return;
-        if (!grouped[log.date]) {
-          grouped[log.date] = { date: log.date, calories: 0, protein: 0, mealCount: 0 };
-        }
-        grouped[log.date].calories += log.calories || 0;
-        grouped[log.date].mealCount += 1;
-        if (log.protein && log.protein > 0) {
-          grouped[log.date].protein += log.protein;
-        } else {
-          grouped[log.date].protein += Math.round((log.calories || 0) * 0.28 / 4);
-        }
+      data.forEach((row) => {
+        grouped[row.date] = {
+          date: row.date,
+          calories: row.calories,
+          protein: row.protein,
+          mealCount: row.meal_count,
+        };
       });
       setDayStats(grouped);
     }
