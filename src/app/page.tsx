@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
+import { useToday } from "@/hooks/useToday";
 import BottomNav from "@/components/BottomNav";
 import ProgressRing from "@/components/ProgressRing";
 import SubstitutionSheet, { estimateMacros } from "@/components/SubstitutionSheet";
@@ -50,7 +51,7 @@ async function apiGetLogs(phone: string, date: string, eaten = true): Promise<Fo
 }
 
 function apiDeleteLog(phone: string, date: string, meal_type: string) {
-  fetch(LOGS_API, { method: "DELETE", headers: JSON_H, body: JSON.stringify({ phone, date, meal_type }) });
+  return fetch(LOGS_API, { method: "DELETE", headers: JSON_H, body: JSON.stringify({ phone, date, meal_type }) });
 }
 
 function apiInsertLog(entry: Omit<FoodLog, "id" | "created_at">) {
@@ -92,8 +93,8 @@ export default function HomePage() {
     components: Array<{ text: string; calories: number; protein: number }>;
   } | null>(null);
 
+  const today = useToday();
   const todayName = getTodayName();
-  const today = new Date().toISOString().split("T")[0];
   const weeklyPlan = mealPlanData.weeklyPlan as Record<string, DayPlan>;
   const todayPlan = weeklyPlan[todayName] as DayPlan | undefined;
 
@@ -158,10 +159,12 @@ export default function HomePage() {
       saveLogs(user.phone, today, updatedLogs);
       setSaveError(null);
 
-      // Sync to DB in background — localStorage is source of truth
-      (async () => {
-        apiDeleteLog(user.phone, today, mealKey);
-        apiDeleteLog(user.phone, today, componentKey);
+      // Sync to DB in background — deletes must complete before insert to avoid race
+      void (async () => {
+        await Promise.all([
+          apiDeleteLog(user.phone, today, mealKey),
+          apiDeleteLog(user.phone, today, componentKey),
+        ]);
         await apiInsertLog({ user_phone: user.phone, date: today, meal_type: componentKey, description: text, calories, protein, eaten: true });
       })();
     }
@@ -291,7 +294,7 @@ export default function HomePage() {
                     </span>
                     <div className="flex items-center gap-2">
                       <span className="text-[11px] text-gray-400">
-                        {eatenCount > 0 && `${eatenCount}/${components.length} • `}
+                        {eatenCount > 0 && `${eatenCount}/${totalChips} • `}
                         {meal.calories} קק״ל
                       </span>
                       {/* Camera button */}

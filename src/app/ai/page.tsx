@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
+import { useToday } from "@/hooks/useToday";
 import BottomNav from "@/components/BottomNav";
 import { Send, Bot, CheckCircle2 } from "lucide-react";
 import { FoodLog } from "@/types";
@@ -42,7 +43,7 @@ export default function AIPage() {
   const [todayLog, setTodayLog] = useState<FoodLog[]>([]);
   const bottomRef = useRef<HTMLDivElement>(null);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = useToday();
 
   const fetchTodayLog = useCallback(async () => {
     if (!user?.phone) return;

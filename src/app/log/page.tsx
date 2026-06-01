@@ -3,6 +3,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
+import { useToday } from "@/hooks/useToday";
 import BottomNav from "@/components/BottomNav";
 import mealPlanData from "@/data/mealPlan.json";
 import { DayPlan, FoodLog } from "@/types";
@@ -19,7 +20,7 @@ export default function LogPage() {
   const [saving, setSaving] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const today = new Date().toISOString().split("T")[0];
+  const today = useToday();
   const todayName = DAY_NAMES[new Date().getDay()];
   const weeklyPlan = mealPlanData.weeklyPlan as Record<string, DayPlan>;
   const todayPlan = weeklyPlan[todayName] as DayPlan | undefined;
