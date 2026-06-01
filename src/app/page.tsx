@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback, Fragment } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { supabase } from "@/lib/supabase";
 import BottomNav from "@/components/BottomNav";
 import ProgressRing from "@/components/ProgressRing";
 import SubstitutionSheet, { estimateMacros } from "@/components/SubstitutionSheet";
@@ -36,6 +35,28 @@ function getMotivational() {
 function localKey(phone: string, date: string) {
   return `fitmeal_logs_${phone}_${date}`;
 }
+const LOGS_API = "/api/logs";
+const JSON_H = { "Content-Type": "application/json" };
+
+async function apiGetLogs(phone: string, date: string, eaten = true): Promise<FoodLog[]> {
+  const p = new URLSearchParams({ phone, date });
+  if (eaten) p.set("eaten", "true");
+  try {
+    const res = await fetch(`${LOGS_API}?${p}`);
+    if (!res.ok) return [];
+    const { data } = await res.json() as { data: FoodLog[] };
+    return data ?? [];
+  } catch { return []; }
+}
+
+function apiDeleteLog(phone: string, date: string, meal_type: string) {
+  fetch(LOGS_API, { method: "DELETE", headers: JSON_H, body: JSON.stringify({ phone, date, meal_type }) });
+}
+
+function apiInsertLog(entry: Omit<FoodLog, "id" | "created_at">) {
+  return fetch(LOGS_API, { method: "POST", headers: JSON_H, body: JSON.stringify(entry) });
+}
+
 function saveLogs(phone: string, date: string, logs: FoodLog[]) {
   try { localStorage.setItem(localKey(phone, date), JSON.stringify(logs)); } catch {}
 }
@@ -83,25 +104,16 @@ export default function HomePage() {
 
   const fetchLogs = useCallback(async () => {
     if (!user?.phone) return;
-    const { data } = await supabase
-      .from("food_logs")
-      .select("*")
-      .eq("user_phone", user.phone)
-      .eq("date", today)
-      .eq("eaten", true);
-    // Prefer Supabase when it has entries; fall back to localStorage for
-    // offline/mock mode OR when a previous insert silently failed (DB empty)
+    const data = await apiGetLogs(user.phone, today, true);
     const localData = loadLogs(user.phone, today);
-    const logsData: FoodLog[] =
-      data && data.length > 0 ? data :
-      localData ?? (data ?? []);
+    const logsData: FoodLog[] = data.length > 0 ? data : localData ?? [];
     setLogs(logsData);
     const compMap = new Map<string, FoodLog>();
     logsData.forEach((l: FoodLog) => {
       if (l.meal_type.includes(":")) compMap.set(l.meal_type, l);
     });
     setEatenComponents(compMap);
-    if (data && data.length > 0) saveLogs(user.phone, today, data);
+    if (data.length > 0) saveLogs(user.phone, today, data);
   }, [user?.phone, today]);
 
   useEffect(() => {
@@ -126,8 +138,7 @@ export default function HomePage() {
       setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
       setLogs(updatedLogs);
       saveLogs(user.phone, today, updatedLogs);
-      supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
+      apiDeleteLog(user.phone, today, componentKey);
     } else {
       // Optimistic update first — chip turns green immediately
       const tempLog: FoodLog = {
@@ -147,17 +158,12 @@ export default function HomePage() {
       saveLogs(user.phone, today, updatedLogs);
       setSaveError(null);
 
-      // Sync to DB in background — localStorage is source of truth, no rollback on failure
-      supabase.from("food_logs").delete()
-        .eq("user_phone", user.phone).eq("date", today).eq("meal_type", mealKey).then(() => {
-          supabase.from("food_logs").delete()
-            .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey).then(() => {
-              supabase.from("food_logs").insert({
-                user_phone: user.phone, date: today, meal_type: componentKey,
-                description: text, calories, protein, eaten: true,
-              });
-            });
-        });
+      // Sync to DB in background — localStorage is source of truth
+      (async () => {
+        apiDeleteLog(user.phone, today, mealKey);
+        apiDeleteLog(user.phone, today, componentKey);
+        await apiInsertLog({ user_phone: user.phone, date: today, meal_type: componentKey, description: text, calories, protein, eaten: true });
+      })();
     }
   };
 

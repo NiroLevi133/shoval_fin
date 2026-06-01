@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { supabase } from "@/lib/supabase";
 import BottomNav from "@/components/BottomNav";
 import mealPlanData from "@/data/mealPlan.json";
 import { DayPlan, FoodLog } from "@/types";
@@ -27,12 +26,8 @@ export default function LogPage() {
 
   const fetchLogs = useCallback(async () => {
     if (!user?.phone) return;
-    const { data } = await supabase
-      .from("food_logs")
-      .select("*")
-      .eq("user_phone", user.phone)
-      .eq("date", today)
-      .order("created_at", { ascending: true });
+    const res = await fetch(`/api/logs?phone=${user.phone}&date=${today}`);
+    const { data } = await res.json() as { data: FoodLog[] };
     if (data) setLogs(data);
   }, [user?.phone, today]);
 
@@ -52,29 +47,33 @@ export default function LogPage() {
   const addCustomEntry = async () => {
     if (!user || !newEntry.description.trim()) return;
     setSaving(true);
-    const { error } = await supabase.from("food_logs").insert({
-      user_phone: user.phone,
-      date: today,
-      meal_type: "custom",
-      description: newEntry.description,
-      calories: parseInt(newEntry.calories) || 0,
-      protein: parseFloat(newEntry.protein) || 0,
-      eaten: true,
+    const res = await fetch("/api/logs", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        user_phone: user.phone, date: today, meal_type: "custom",
+        description: newEntry.description,
+        calories: parseInt(newEntry.calories) || 0,
+        protein: parseFloat(newEntry.protein) || 0,
+        eaten: true,
+      }),
     });
-    if (!error) {
+    if (res.ok) {
       setNewEntry({ description: "", calories: "", protein: "" });
       setShowAdd(false);
       await fetchLogs();
       refreshLogs();
-    } else {
-      console.error("Insert error:", error.message);
     }
     setSaving(false);
   };
 
   const deleteEntry = async (id: string) => {
     setDeleting(id);
-    await supabase.from("food_logs").delete().eq("id", id);
+    await fetch("/api/logs", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id }),
+    });
     setLogs((prev) => prev.filter((l) => l.id !== id));
     setDeleting(null);
     refreshLogs();

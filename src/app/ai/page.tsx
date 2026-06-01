@@ -3,7 +3,6 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { supabase } from "@/lib/supabase";
 import BottomNav from "@/components/BottomNav";
 import { Send, Bot, CheckCircle2 } from "lucide-react";
 import { FoodLog } from "@/types";
@@ -34,16 +33,12 @@ export default function AIPage() {
 
   const fetchTodayLog = useCallback(async () => {
     if (!user?.phone) return;
-    const { data } = await supabase
-      .from("food_logs")
-      .select("*")
-      .eq("user_phone", user.phone)
-      .eq("date", today)
-      .eq("eaten", true);
+    const res = await fetch(`/api/logs?phone=${user.phone}&date=${today}&eaten=true`);
+    const { data } = await res.json() as { data: FoodLog[] };
     const localData: FoodLog[] | null = (() => {
       try { return JSON.parse(localStorage.getItem(`fitmeal_logs_${user.phone}_${today}`) ?? "null"); } catch { return null; }
     })();
-    const logsData = data && data.length > 0 ? data : localData ?? data ?? [];
+    const logsData = data && data.length > 0 ? data : localData ?? [];
     setTodayLog(logsData);
   }, [user?.phone, today]);
 
@@ -74,14 +69,9 @@ export default function AIPage() {
 
     try {
       // Refresh today's log before sending to have latest data
-      const { data: latestLog } = await supabase
-        .from("food_logs")
-        .select("*")
-        .eq("user_phone", user.phone)
-        .eq("date", today)
-        .eq("eaten", true);
-
-      const currentLog = latestLog ?? todayLog;
+      const latestRes = await fetch(`/api/logs?phone=${user.phone}&date=${today}&eaten=true`);
+      const { data: latestLog } = await latestRes.json() as { data: FoodLog[] };
+      const currentLog = latestLog?.length > 0 ? latestLog : todayLog;
       const todayCalories = currentLog.reduce((s: number, l: FoodLog) => s + (l.calories || 0), 0);
 
       const res = await fetch("/api/chat", {
