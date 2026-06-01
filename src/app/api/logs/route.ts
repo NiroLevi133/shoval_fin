@@ -12,16 +12,20 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
   const phone = searchParams.get("phone");
   const date = searchParams.get("date");
+  const dateFrom = searchParams.get("date_from");
+  const dateTo = searchParams.get("date_to");
   const eaten = searchParams.get("eaten");
 
-  if (!phone || !date) return Response.json({ data: [] });
+  if (!phone) return Response.json({ data: [] });
 
   let query = db()
     .from("food_logs")
     .select("*")
-    .eq("user_phone", phone)
-    .eq("date", date);
+    .eq("user_phone", phone);
 
+  if (date) query = query.eq("date", date);
+  if (dateFrom) query = query.gte("date", dateFrom);
+  if (dateTo) query = query.lte("date", dateTo);
   if (eaten === "true") query = query.eq("eaten", true);
 
   const { data, error } = await query.order("created_at", { ascending: true });

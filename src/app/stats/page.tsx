@@ -3,7 +3,6 @@
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useUser } from "@/context/UserContext";
-import { supabase } from "@/lib/supabase";
 import BottomNav from "@/components/BottomNav";
 import { FoodLog } from "@/types";
 import { ChevronRight, ChevronLeft } from "lucide-react";
@@ -37,8 +36,9 @@ export default function StatsPage() {
   const [dayStats, setDayStats] = useState<Record<string, DayStat>>({});
   const [loading, setLoading] = useState(false);
 
-  const today = new Date();
-  const targetDate = new Date(today.getFullYear(), today.getMonth() + monthOffset, 1);
+  const todayDate = new Date();
+  const today = todayDate; // keep reference for todayStr below
+  const targetDate = new Date(todayDate.getFullYear(), todayDate.getMonth() + monthOffset, 1);
   const year = targetDate.getFullYear();
   const month = targetDate.getMonth();
 
@@ -52,17 +52,14 @@ export default function StatsPage() {
     const lastDay = new Date(year, month + 1, 0);
     const lastDayStr = `${year}-${String(month + 1).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
 
-    const { data } = await supabase
-      .from("food_logs")
-      .select("*")
-      .eq("user_phone", user.phone)
-      .eq("eaten", true)
-      .gte("date", firstDay)
-      .lte("date", lastDayStr);
+    const res = await fetch(
+      `/api/logs?phone=${user.phone}&date_from=${firstDay}&date_to=${lastDayStr}&eaten=true`
+    );
+    const { data } = await res.json() as { data: FoodLog[] };
 
     if (data) {
       const grouped: Record<string, DayStat> = {};
-      (data as FoodLog[]).forEach((log) => {
+      data.forEach((log) => {
         if (!grouped[log.date]) {
           grouped[log.date] = { date: log.date, calories: 0, protein: 0, mealCount: 0 };
         }
@@ -91,7 +88,7 @@ export default function StatsPage() {
   // Build calendar grid
   const firstDayOfMonth = new Date(year, month, 1).getDay(); // 0=Sun
   const daysInMonth = new Date(year, month + 1, 0).getDate();
-  const todayStr = today.toISOString().split("T")[0];
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
 
   const calendarCells: (number | null)[] = [
     ...Array(firstDayOfMonth).fill(null),
