@@ -32,6 +32,19 @@ function getMotivational() {
   return MOTIVATIONAL[new Date().getDay() % MOTIVATIONAL.length];
 }
 
+function localKey(phone: string, date: string) {
+  return `fitmeal_logs_${phone}_${date}`;
+}
+function saveLogs(phone: string, date: string, logs: FoodLog[]) {
+  try { localStorage.setItem(localKey(phone, date), JSON.stringify(logs)); } catch {}
+}
+function loadLogs(phone: string, date: string): FoodLog[] | null {
+  try {
+    const raw = localStorage.getItem(localKey(phone, date));
+    return raw ? (JSON.parse(raw) as FoodLog[]) : null;
+  } catch { return null; }
+}
+
 // Parse "item1 + item2 + item3" → ["item1", "item2", "item3"]
 function parseComponents(description: string): string[] {
   const clean = description.replace(/\n?\(\d+\s*קק"ל\)/g, "").trim();
@@ -68,13 +81,16 @@ export default function HomePage() {
       .eq("user_phone", user.phone)
       .eq("date", today)
       .eq("eaten", true);
-    if (data) {
-      setLogs(data);
+    // Fall back to localStorage when Supabase is in offline/mock mode
+    const logsData: FoodLog[] | null = data ?? loadLogs(user.phone, today);
+    if (logsData) {
+      setLogs(logsData);
       const compMap = new Map<string, FoodLog>();
-      data.forEach((l: FoodLog) => {
+      logsData.forEach((l: FoodLog) => {
         if (l.meal_type.includes(":")) compMap.set(l.meal_type, l);
       });
       setEatenComponents(compMap);
+      if (data) saveLogs(user.phone, today, logsData);
     }
   }, [user?.phone, today]);
 
@@ -96,8 +112,10 @@ export default function HomePage() {
 
     if (eatenComponents.has(componentKey)) {
       // Toggle off
+      const updatedLogs = logs.filter((l) => l.meal_type !== componentKey);
       setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
-      setLogs((prev) => prev.filter((l) => l.meal_type !== componentKey));
+      setLogs(updatedLogs);
+      saveLogs(user.phone, today, updatedLogs);
       await supabase
         .from("food_logs").delete()
         .eq("user_phone", user.phone).eq("date", today).eq("meal_type", componentKey);
@@ -118,8 +136,10 @@ export default function HomePage() {
         eaten: true,
         created_at: new Date().toISOString(),
       };
+      const updatedLogs = [...logs.filter((l) => l.meal_type !== mealKey), tempLog];
       setEatenComponents((prev) => new Map(prev).set(componentKey, tempLog));
-      setLogs((prev) => [...prev.filter((l) => l.meal_type !== mealKey), tempLog]);
+      setLogs(updatedLogs);
+      saveLogs(user.phone, today, updatedLogs);
 
       const { error } = await supabase.from("food_logs").insert({
         user_phone: user.phone, date: today, meal_type: componentKey,
@@ -127,8 +147,10 @@ export default function HomePage() {
       });
       if (error) {
         console.error("Insert error:", error.message);
+        const rollbackLogs = updatedLogs.filter((l) => l.id !== tempLog.id);
         setEatenComponents((prev) => { const m = new Map(prev); m.delete(componentKey); return m; });
-        setLogs((prev) => prev.filter((l) => l.id !== tempLog.id));
+        setLogs(rollbackLogs);
+        saveLogs(user.phone, today, rollbackLogs);
       }
     }
   };
