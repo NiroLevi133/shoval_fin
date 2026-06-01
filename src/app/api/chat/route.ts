@@ -179,7 +179,11 @@ export async function POST(req: NextRequest) {
       messages: [
         { role: "system", content: systemPrompt },
         ...messages,
-        firstChoice.message,
+        {
+          role: "assistant" as const,
+          content: firstChoice.message.content ?? null,
+          tool_calls: firstChoice.message.tool_calls,
+        },
         {
           role: "tool" as const,
           tool_call_id: toolCall.id,
