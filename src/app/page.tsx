@@ -40,6 +40,7 @@ export default function HomePage() {
 
   const [meals, setMeals] = useState<DayMeal[]>([]);
   const [eaten, setEaten] = useState<Set<MealType>>(new Set());
+  const [swaps, setSwaps] = useState<Record<string, Record<number, string>>>({});
   const [scanning, setScanning] = useState<MealType | null>(null);
   const [scanResult, setScanResult] = useState<{
     mealType: MealType;
@@ -50,12 +51,19 @@ export default function HomePage() {
 
   const loadData = useCallback(async () => {
     if (!user?.phone) return;
-    const [menuRes, compRes] = await Promise.all([
+    const ph = encodeURIComponent(user.phone);
+    const [menuRes, compRes, swapRes] = await Promise.all([
       fetch(`/api/menu?day=${encodeURIComponent(todayName)}`).then((r) => r.json()),
-      fetch(`/api/completions?phone=${encodeURIComponent(user.phone)}&date=${today}`).then((r) => r.json()),
+      fetch(`/api/completions?phone=${ph}&date=${today}`).then((r) => r.json()),
+      fetch(`/api/swaps?phone=${ph}&date=${today}`).then((r) => r.json()),
     ]);
     setMeals(menuRes.meals ?? []);
     setEaten(new Set((compRes.data ?? []).map((c: MealCompletion) => c.meal_type)));
+    const swapMap: Record<string, Record<number, string>> = {};
+    for (const s of swapRes.data ?? []) {
+      (swapMap[s.meal_type] ??= {})[s.item_index] = s.replacement;
+    }
+    setSwaps(swapMap);
   }, [user?.phone, today, todayName]);
 
   useEffect(() => {
@@ -193,6 +201,8 @@ export default function HomePage() {
                 requiredText={m.required_text}
                 example={m.example}
                 calories={m.calories}
+                mealType={m.meal_type}
+                swaps={swaps[m.meal_type]}
                 eaten={eaten.has(m.meal_type)}
                 onToggle={() => toggleMeal(m.meal_type)}
                 onScan={(file) => handleScan(m.meal_type, m.label, file)}

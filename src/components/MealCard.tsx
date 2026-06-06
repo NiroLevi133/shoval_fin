@@ -10,6 +10,8 @@ type MealCardProps = {
   example: string;
   calories?: number | null;
   // אינטראקציה (תפריט יומי בלבד)
+  mealType?: string;
+  swaps?: Record<number, string>; // index -> טקסט תחליף שנבחר
   eaten?: boolean;
   onToggle?: () => void;
   onScan?: (file: File) => void;
@@ -28,6 +30,8 @@ export default function MealCard({
   requiredText,
   example,
   calories,
+  mealType,
+  swaps,
   eaten,
   onToggle,
   onScan,
@@ -37,6 +41,19 @@ export default function MealCard({
   const components = parseComponents(example);
   const interactive = !!onToggle;
   const accent = MEAL_ACCENT[label] ?? "border-r-gray-200";
+
+  const openSubs = (original: string, idx: number) => {
+    const groupKey = detectGroupKey(original);
+    const params = new URLSearchParams();
+    if (groupKey) params.set("group", groupKey);
+    // מצב החלפה — רק בתפריט היומי (כשיש mealType)
+    if (mealType) {
+      params.set("meal", mealType);
+      params.set("idx", String(idx));
+      params.set("orig", original);
+    }
+    router.push(`/subs?${params.toString()}`);
+  };
 
   return (
     <div
@@ -85,19 +102,25 @@ export default function MealCard({
       </div>
 
       {/* דוגמה — רכיבים לחיצים */}
-      <p className="text-[10px] text-gray-400 mb-1.5 font-medium">דוגמה (לחץ רכיב להחלפה)</p>
+      <p className="text-[10px] text-gray-400 mb-1.5 font-medium">
+        {mealType ? "מה אכלת? (לחץ רכיב להחלפה)" : "דוגמה (לחץ רכיב להחלפה)"}
+      </p>
       <div className="flex flex-wrap gap-1.5">
         {components.map((comp, i) => {
-          const groupKey = detectGroupKey(comp);
+          const swapped = swaps?.[i];
+          const display = swapped ?? comp;
           return (
             <button
               key={i}
-              onClick={() =>
-                router.push(`/subs${groupKey ? `?group=${groupKey}` : ""}`)
-              }
-              className="px-2.5 py-1.5 rounded-xl text-xs border bg-gray-50 border-gray-200 text-gray-700 hover:border-green-300 active:scale-95 transition-all text-right leading-snug max-w-full"
+              onClick={() => openSubs(comp, i)}
+              className={`px-2.5 py-1.5 rounded-xl text-xs border active:scale-95 transition-all text-right leading-snug max-w-full ${
+                swapped
+                  ? "bg-blue-50 border-blue-300 text-blue-700 font-medium"
+                  : "bg-gray-50 border-gray-200 text-gray-700 hover:border-green-300"
+              }`}
             >
-              {comp}
+              {swapped && <span className="text-blue-400 ml-1">↔</span>}
+              {display}
             </button>
           );
         })}
