@@ -18,10 +18,6 @@ export default function OnboardingPage() {
     setUser({
       name: form.name.trim(),
       phone: form.phone.trim(),
-      calorie_target: 1300,
-      protein_target: 110,
-      carbs_target: 130,
-      fat_target: 45,
     });
     router.push("/");
   };

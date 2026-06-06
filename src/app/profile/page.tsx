@@ -111,17 +111,6 @@ export default function ProfilePage() {
           </div>
         </div>
 
-        {/* Targets */}
-        <div className="bg-white rounded-3xl p-5 shadow-sm">
-          <h2 className="text-sm font-semibold text-gray-500 mb-3">יעדים תזונתיים</h2>
-          <div className="grid grid-cols-2 gap-2">
-            <Field label="קלוריות יומיות" value={form.calorie_target?.toString() ?? "1300"} onChange={(v) => setForm({ ...form, calorie_target: parseInt(v) || 1300 })} type="number" />
-            <Field label="חלבון (גר')" value={form.protein_target?.toString() ?? "110"} onChange={(v) => setForm({ ...form, protein_target: parseInt(v) || 110 })} type="number" />
-            <Field label="פחמימות (גר')" value={form.carbs_target?.toString() ?? "130"} onChange={(v) => setForm({ ...form, carbs_target: parseInt(v) || 130 })} type="number" />
-            <Field label="שומן (גר')" value={form.fat_target?.toString() ?? "45"} onChange={(v) => setForm({ ...form, fat_target: parseInt(v) || 45 })} type="number" />
-          </div>
-        </div>
-
         {/* Save button */}
         <button
           onClick={handleSave}

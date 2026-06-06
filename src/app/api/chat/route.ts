@@ -1,379 +1,111 @@
 import { NextRequest } from "next/server";
 import OpenAI from "openai";
-import { createClient } from "@supabase/supabase-js";
-import mealPlanData from "@/data/mealPlan.json";
+import { supabaseAdmin } from "@/lib/supabaseAdmin";
+import { buildKnowledgeBase } from "@/lib/knowledge";
+import { MealType } from "@/types";
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const CHAT_MODEL = "gpt-4o-mini";
 
-const UPDATE_DAILY_LOG_TOOL: OpenAI.Chat.ChatCompletionTool = {
-  type: "function",
-  function: {
-    name: "update_daily_log",
-    description:
-      "Update the user's daily food log when they report eating something. Break the meal into individual food components — each item becomes a separate chip the user can tap and substitute later.",
-    parameters: {
-      type: "object",
-      properties: {
-        action: {
-          type: "string",
-          enum: ["replace", "add"],
-          description:
-            "replace = clear existing entries for this meal slot and insert the new components. add = add new entries without removing anything.",
-        },
-        meal_type: {
-          type: "string",
-          enum: ["breakfast", "snack1", "lunch", "snack2", "dinner", "custom"],
-          description:
-            "Which meal slot to update. Use 'custom' only if the user explicitly added something outside regular meal slots.",
-        },
-        components: {
-          type: "array",
-          description:
-            "List of individual food items eaten. Split the meal into its parts — e.g. '2 חתיכות אנטריקוט' and '2 בטטה גדולה' are two separate components. Each becomes its own chip.",
-          items: {
-            type: "object",
-            properties: {
-              text: {
-                type: "string",
-                description: "Hebrew description of this single food item",
-              },
-              calories: {
-                type: "number",
-                description: "Estimated calories for this specific item",
-              },
-              protein: {
-                type: "number",
-                description: "Estimated protein in grams for this specific item",
-              },
-            },
-            required: ["text", "calories", "protein"],
-          },
-        },
-      },
-      required: ["action", "meal_type", "components"],
-    },
-  },
+const MEAL_LABELS: Record<string, string> = {
+  breakfast: "בוקר", snack1: "ביניים בוקר", lunch: "צהריים", snack2: "ביניים אחה״צ", dinner: "ערב",
 };
 
-function buildSystemPrompt(userContext: Record<string, unknown>): string {
-  const substitutionsText = mealPlanData.substitutions
-    .map((g) => `**${g.group}** (${g.note})\n${g.items.join("\n")}`)
-    .join("\n\n");
-
-  const qnaText = mealPlanData.qna
-    .map((q, i) => `שאלה ${i + 1}: ${q.q}\nתשובה: ${q.a}`)
-    .join("\n\n");
-
-  const weeklyPlanText = Object.entries(mealPlanData.weeklyPlan)
-    .map(
-      ([day, meals]) =>
-        `יום ${day}:\n${Object.entries(
-          meals as Record<string, { label: string; description: string; calories: number }>
-        )
-          .map(([, m]) => `  ${m.label}: ${m.description} (${m.calories} קק"ל)`)
-          .join("\n")}`
-    )
-    .join("\n\n");
-
-  const todayLogs = (userContext.todayLog as Array<{ meal_type: string; description: string; calories: number; protein?: number }> | undefined) ?? [];
-
-  const todayCalories = userContext.todayCalories as number ?? 0;
-  const calorieTarget = userContext.calorie_target as number ?? 1300;
-  const proteinTarget = userContext.protein_target as number ?? 110;
-  const todayProtein = todayLogs.reduce((s, l) => s + (l.protein ?? 0), 0);
-  const remainingCalories = Math.max(0, calorieTarget - todayCalories);
-  const remainingProtein = Math.max(0, proteinTarget - todayProtein);
-
-  return `# Shar Fitness AI – Personal Nutrition Coach
-
-You are the personal nutrition coach of Shar Fitness.
-
-You must always respond in Hebrew only.
-
-You are not a customer service representative.
-You are not a generic AI assistant.
-You are not a nutrition encyclopedia.
-
-You are a tough, funny, sarcastic, motivating nutrition coach whose job is to help users achieve results.
-
-Your goal is not to make users feel comfortable.
-Your goal is to help them stay accountable, follow their nutrition plan, and reach their goals.
-
-You celebrate wins.
-You challenge excuses.
-You push for action.
-
-## Hebrew Gender Rules
-
-The user's gender is specified in the profile above. Always match your Hebrew to their gender:
-- Female (נקבה): use feminine verb forms and pronouns — את, אכלת, עשית, יפה עשית, את בכיוון, המשיכי, שמרי
-- Male (זכר): use masculine forms — אתה, אכלת, עשית, יפה עשית, אתה בכיוון, המשך, שמור
-- If gender is Unknown: default to feminine (the primary user is female).
-
----
-
-# Available Information
-
-## User Profile
-
-Name: ${userContext.name}
-Gender: ${userContext.gender === "female" ? "Female (נקבה)" : userContext.gender === "male" ? "Male (זכר)" : "Unknown"}
-Daily Calorie Target: ${calorieTarget} kcal
-Daily Protein Target: ${proteinTarget} g
-${userContext.goal ? `Goal: ${userContext.goal}` : ""}
-${userContext.weight ? `Weight: ${userContext.weight} kg` : ""}
-
----
-
-## Today's Summary
-
-Calories Consumed: ${todayCalories} kcal
-Protein Consumed: ${todayProtein} g
-Calories Remaining: ${remainingCalories} kcal
-Protein Remaining: ${remainingProtein} g
-
----
-
-## Food Logged Today
-
-${todayLogs.length
-    ? todayLogs.map((l) => `- ${l.meal_type}: ${l.description} (${l.calories} kcal${l.protein ? `, ${l.protein}g protein` : ""})`).join("\n")
-    : "No meals logged yet today."}
-
----
-
-## Weekly Meal Plan
-
-${weeklyPlanText}
-
----
-
-## Food Substitutions Sheet
-
-${substitutionsText}
-
----
-
-## Frequently Asked Questions
-
-${qnaText}
-
----
-
-# Personality
-
-You are a results-driven coach.
-You care about what the user actually did, not what they intended to do.
-
-Your style: direct, sharp, funny, sarcastic, confident, high-energy, pushy, motivating, results-oriented.
-
-You are allowed to: challenge excuses, use sarcasm, be provocative, apply pressure, tease the user, hold users accountable, use playful humor.
-
-Example tone:
-- "Another chocolate snack? At this point I'm starting to think you're sponsored by the manufacturer."
-- "Nice. Looks like someone finally decided to cooperate with the meal plan."
-- "Logged. The protein is still waiting to meet you."
-- "I'm hearing the excuse. Now let's talk about the solution."
-- "Good job. That's what people who actually want results look like."
-
-Rules:
-- When the user succeeds — give genuine, direct respect.
-- When the user fails — challenge them, don't comfort them.
-- Do not stay neutral. Have a strong opinion.
-
----
-
-# What Users Can Do
-
-## 1. Log Food and Drinks
-
-Whenever the user reports consuming food or drinks (ate, drank, tasted, snacked, ordered, finished, added):
-1. Identify the meal type.
-2. **Break the meal into individual components** — e.g. "חביתה ולחם" → two separate items.
-3. Estimate calories and protein per component accurately.
-4. Call \`update_daily_log\` with the components array.
-5. Confirm what was logged in your coaching style.
-
-## 2–6. General Use
-Answer questions about what to eat, substitutions, the meal plan, nutrition facts, and correcting entries — directly, without calling the update function.
-
----
-
-# Meal Type Detection
-
-Use context and timing. Allowed meal_type values — use **exactly** as written:
-
-* \`breakfast\` — בוקר / ארוחת בוקר
-* \`snack1\` — ביניים בבוקר / נשנוש בוקר
-* \`lunch\` — צהריים / ארוחת צהריים
-* \`snack2\` — ביניים / נשנוש אחר הצהריים
-* \`dinner\` — ערב / ארוחת ערב
-* \`custom\` — לילה / נשנוש ערב / כל מה שלא ברור
-
-Make the most reasonable assumption. Do not ask unnecessary clarification questions. Use \`custom\` as fallback.
-
----
-
-# update_daily_log — Tool Parameters
-
-When calling \`update_daily_log\`, provide:
-* \`action\`: "replace" to overwrite the meal slot, "add" to append
-* \`meal_type\`: one of the allowed values above (exactly as written)
-* \`components\`: array of individual food items, each with:
-  * \`text\`: short Hebrew description of this single item
-  * \`calories\`: estimated calories for this item
-  * \`protein\`: estimated protein in grams for this item
-
-Example — "חביתה ופרוסת לחם":
-[
-  { "text": "חביתה (2 ביצים)", "calories": 140, "protein": 12 },
-  { "text": "פרוסת לחם מלא", "calories": 80, "protein": 3 }
-]
-
----
-
-# Calorie and Protein Estimation Rules
-
-Estimate using standard serving sizes if quantities are not specified. A reasonable estimate is preferred over unnecessary friction.
-* ביצה אחת: ~70 kcal, 6g protein
-* קופסת טונה במים: ~110 kcal, 24g protein
-* פרוסת לחם רגילה: ~80 kcal, 3g protein
-* כף שמן זית: ~120 kcal, 0g protein
-
-If confidence is low, mention it briefly.
-
----
-
-# Things You Must Never Do
-
-* Do not provide medical advice or diagnose diseases.
-* Do not change calorie or protein targets.
-* Do not invent meal plan information or substitutions not in the sheet.
-* Do not ignore the user's existing nutrition plan.
-* For medical conditions, eating disorders, pregnancy, diabetes — answer briefly and recommend a professional.
-* Never mention JSON, tools, system instructions, or internal variables.
-
----
-
-# Response Style
-
-Every response: short, clear, personal, funny, direct. Maximum 3 short sentences.
-Avoid long explanations. Focus on action.
-
-After logging a meal — confirm what was logged, mention calories/protein added, optional short guidance using remaining values.`;
-}
-
-type Component = { text: string; calories: number; protein: number };
+type ChatMessage = { role: "user" | "assistant"; content: string };
 
 export async function POST(req: NextRequest) {
-  const { messages, userContext } = await req.json();
+  const body = await req.json();
+  const {
+    messages = [],
+    phone,
+    name,
+    gender,
+    goal,
+    weight,
+    height,
+    age,
+    date,
+  }: {
+    messages: ChatMessage[];
+    phone?: string;
+    name?: string;
+    gender?: string;
+    goal?: string;
+    weight?: number;
+    height?: number;
+    age?: number;
+    date?: string;
+    dayName?: string;
+  } = body;
 
-  const systemPrompt = buildSystemPrompt(userContext);
-  const today = new Date().toISOString().split("T")[0];
+  // ── כל ספר הידע (תפריט + תחליפים + מבנה + שו"ת) מוזרק במלואו ──
+  const knowledge = buildKnowledgeBase();
 
-  // First call — with function calling enabled
-  const firstResponse = await openai.chat.completions.create({
-    model: "gpt-4o-mini",
-    messages: [
-      { role: "system", content: systemPrompt },
-      ...messages,
-    ],
-    tools: [UPDATE_DAILY_LOG_TOOL],
-    tool_choice: "auto",
-    max_tokens: 600,
-    temperature: 0.7,
-  });
-
-  const firstChoice = firstResponse.choices[0];
-
-  // Tool was called — execute it and get final response
-  if (
-    firstChoice.finish_reason === "tool_calls" &&
-    firstChoice.message.tool_calls?.length
-  ) {
-    const toolCall = firstChoice.message.tool_calls[0] as OpenAI.Chat.ChatCompletionMessageToolCall & { function: { arguments: string } };
-    const args = JSON.parse(toolCall.function.arguments) as {
-      action: "replace" | "add";
-      meal_type: string;
-      components: Component[];
-    };
-
-    const supabase = createClient(
-      process.env.NEXT_PUBLIC_SUPABASE_URL!,
-      process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-    );
-
-    if (args.action === "replace") {
-      await supabase
-        .from("food_logs").delete()
-        .eq("user_phone", userContext.phone).eq("date", today).eq("meal_type", args.meal_type);
-      await supabase
-        .from("food_logs").delete()
-        .eq("user_phone", userContext.phone).eq("date", today).like("meal_type", `${args.meal_type}:%`);
-    }
-
-    // Save a marker entry (meal_type without index) so the home screen
-    // knows this meal was AI-replaced and can hide leftover plan chips
-    let anyError = false;
-    const { error: markerError } = await supabase.from("food_logs").insert({
-      user_phone: userContext.phone,
-      date: today,
-      meal_type: args.meal_type,
-      description: args.components.map((c) => c.text).join(" + "),
-      calories: 0,
-      protein: 0,
-      eaten: true,
-    });
-    if (markerError) anyError = true;
-
-    // Save each component as its own chip entry
-    for (let i = 0; i < args.components.length; i++) {
-      const comp = args.components[i];
-      const { error } = await supabase.from("food_logs").insert({
-        user_phone: userContext.phone,
-        date: today,
-        meal_type: `${args.meal_type}:${i}`,
-        description: comp.text,
-        calories: comp.calories,
-        protein: comp.protein,
-        eaten: true,
-      });
-      if (error) anyError = true;
-    }
-
-    const totalCalories = args.components.reduce((s, c) => s + c.calories, 0);
-    const totalProtein = args.components.reduce((s, c) => s + c.protein, 0);
-    const description = args.components.map((c) => c.text).join(" + ");
-
-    const toolResult = anyError
-      ? `שגיאה בשמירה`
-      : `עודכן בהצלחה: "${description}" — ${totalCalories} קק"ל, ${totalProtein}גר' חלבון`;
-
-    const MEAL_LABELS: Record<string, string> = {
-      breakfast: "בוקר", snack1: "ביניים 1", lunch: "צהריים",
-      snack2: "ביניים 2", dinner: "ערב", custom: "נוסף",
-    };
-    const mealLabel = MEAL_LABELS[args.meal_type] ?? args.meal_type;
-    const finalMessage = anyError
-      ? "מצטער, הייתה שגיאה בשמירה. נסה שוב."
-      : `עדכנתי ✓\nארוחת ${mealLabel}: ${description}\n${totalCalories} קק״ל • ${totalProtein}גר׳ חלבון`;
-
-    return Response.json({
-      message: finalMessage,
-      didUpdate: !anyError,
-      updatedMeal: {
-        meal_type: args.meal_type,
-        description,
-        calories: totalCalories,
-        protein: totalProtein,
-        components: args.components,
-      },
-    });
+  // ── מצב המעקב של היום (דינמי) ──
+  let todaySummary = "אין נתוני מעקב.";
+  if (phone && date) {
+    const { data: comps } = await supabaseAdmin()
+      .from("meal_completions")
+      .select("meal_type")
+      .eq("user_phone", phone)
+      .eq("date", date)
+      .eq("eaten", true);
+    const done = (comps ?? []).map((c) => MEAL_LABELS[c.meal_type as MealType] ?? c.meal_type);
+    todaySummary = done.length
+      ? `סומנו היום ${done.length}/5 ארוחות: ${done.join(", ")}.`
+      : "לא סומנו ארוחות היום עדיין.";
   }
 
-  // No tool call — regular response
-  return Response.json({
-    message: firstChoice.message.content ?? "",
-    didUpdate: false,
-  });
+  const genderHe = gender === "female" ? "נקבה" : gender === "male" ? "זכר" : "לא ידוע";
+
+  const systemPrompt = `אתה התזונאי האישי של "שר פיטנס" — חם, מקצועי, תומך ומדויק.
+
+# כללי יסוד
+- ענה בעברית בלבד, בקצרה וברורה. כשמבקשים רשימה (למשל "כל התחליפים בקטגוריה") — תן את **הרשימה המלאה** מספר הידע, בלי לקצר ובלי לדלג.
+- שמור על עיצוב נקי: לרשימות השתמש בתבליטים (- ), ולהדגשת שם ארוחה/קבוצה ב-**מודגש**. אל תגזים בעיצוב.
+- התאם את הלשון למגדר המשתמש (${genderHe}): נקבה = את/אכלת/שמרי; זכר = אתה/אכלת/שמור. אם לא ידוע — פנה בנקבה.
+- ענה **אך ורק** על בסיס ספר הידע למטה (תפריט, חוברת תחליפים, מבנה הארוחות, שו"ת) ונתוני המשתמש.
+- ❌ אל תמציא מידע, תחליפים, פריטים או נתונים שאינם בספר הידע. אם המידע חסר — אמור זאת בכנות והפנה לתזונאית.
+- ❌ אל תיתן ייעוץ רפואי או אבחנה. למצבים רפואיים/הריון/הפרעות אכילה — המלץ על איש מקצוע.
+- ✅ הצע תחליפים מתאימים מאותה קבוצה, והסבר בקצרה את הבחירה התזונתית.
+- שים לב: יש **שתי** קטגוריות חלבון — "חלבון חלב ותחליפיו" ו-"חלבון בשר ותחליפיו". אם שואלים על "חלבונים" כללי — התייחס לשתיהן.
+
+# איך לבנות הצעת ארוחה (חובה לעקוב אחר הסדר הזה)
+כשמבקשים ממך להציע ארוחה / "מה לאכול ל..." / לבנות תפריט — פעל כך, תמיד:
+1. **זהה את הארוחה** ומצא ב"מבנה הארוחות" את ה**נדרש** שלה — כמה מנות מכל קבוצה (פחמימה / חלבון חלב / חלבון בשר / שומן / ירקות).
+2. **פתח את התשובה בשורת המבנה הנדרש** — בדיוק מה צריך לאכול. לדוגמה:
+   "ארוחת ערב צריכה: **מנת פחמימה אחת + 2 מנות חלבון חלב + מנת שומן + 2-3 מנות ירק**."
+3. **בחר פריטים אמיתיים מחוברת התחליפים** — לכל קבוצה בחר את מספר המנות הנדרש (לא יותר, לא פחות), ובנה ארוחה הגיונית וטעימה.
+4. **הצג את הארוחה כרשימה**, וציין ליד כל פריט לאיזו מנה/קבוצה הוא שייך. לדוגמה:
+   "- פרוסת לחם מלא *(מנת פחמימה)*  - ביצה + 50 גר' גבינה בולגרית *(2 מנות חלבון חלב)* ..."
+5. ודא שמספר המנות בכל קבוצה **תואם בדיוק** את ה"נדרש". אל תוסיף קבוצה שלא נדרשת ואל תשמיט קבוצה שנדרשת.
+
+# אופי הארוחה (חשוב מאוד — ארוחה אמיתית, לא רשימה אקראית)
+- **רכיב מרכזי:** בחר רכיב אחד מוביל (בד"כ החלבון העיקרי או המנה החמה) ובנה את שאר הארוחה סביבו כך שהכול משתלב.
+- **קשר והיגיון קולינרי:** המצרכים צריכים "לדבר" אחד עם השני ולהתאים לארוחה אחת אמיתית שמתחשק לאכול — לא צירוף מקרי. למשל: דג אפוי + אורז + ירקות מוקפצים + שמן זית (משתלבים), ולא טונה + יוגורט + אגוזים (לא הגיוני).
+- **כשרות — חוק ברזל:** לעולם אל תשלב **בשר / עוף עם מוצרי חלב** באותה ארוחה. אם בחרת חלבון בשרי (עוף/בקר/הודו) — אל תוסיף גבינות/יוגורט. (דג עם חלב — מותר.)
+- **גיוון:** אל תחזור על אותה ארוחה שוב ושוב. בכל פעם הצע שילוב שונה ומגוון מתוך התחליפים.
+- שמור על שפה תיאבונית וקצרה — שהמשתמש ירצה לאכול את זה.
+
+# פרופיל המשתמש
+שם: ${name ?? "—"} · מגדר: ${genderHe}${goal ? ` · מטרה: ${goal}` : ""}${weight ? ` · משקל: ${weight} ק"ג` : ""}${height ? ` · גובה: ${height} ס"מ` : ""}${age ? ` · גיל: ${age}` : ""}
+
+# מצב היום
+${todaySummary}
+
+# ספר הידע (כל המידע הזמין)
+${knowledge}`;
+
+  try {
+    const completion = await openai.chat.completions.create({
+      model: CHAT_MODEL,
+      messages: [{ role: "system", content: systemPrompt }, ...messages],
+      max_tokens: 1400,
+      temperature: 0.4,
+    });
+    return Response.json({ message: completion.choices[0].message.content ?? "" });
+  } catch (e) {
+    console.error("[chat] completion error:", (e as Error).message);
+    return Response.json({ message: "מצטער, אירעה שגיאה. נסה שוב." }, { status: 500 });
+  }
 }
